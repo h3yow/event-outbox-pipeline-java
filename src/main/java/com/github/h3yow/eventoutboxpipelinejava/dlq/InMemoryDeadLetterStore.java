@@ -64,4 +64,16 @@ public class InMemoryDeadLetterStore implements DeadLetterStore {
         }
         return Optional.empty();
     }
+
+    @Override
+    public Optional<Long> earliestOffset(String partition) {
+        Long earliest = null;
+        for (DeadLetterRecord record : byEventId.values()) {
+            if (record.partition().equals(partition)
+                    && (earliest == null || record.offset() < earliest)) {
+                earliest = record.offset();
+            }
+        }
+        return Optional.ofNullable(earliest);
+    }
 }

@@ -61,7 +61,9 @@ public class EventPipelineAutoConfiguration {
                                        RetryPolicy retryPolicy,
                                        EventPipelineProperties props) {
         EventPipeline pipeline = new EventPipeline(broker, state, deadLetters,
-                handler, retryPolicy, props.getWorkerCount());
+                handler, retryPolicy, props.getWorkerCount(), 5L,
+                props.getRetentionInterval() == null ? 0L
+                        : Math.max(0L, props.getRetentionInterval().toMillis()));
         if (props.isAutoStart()) {
             pipeline.start();
         }

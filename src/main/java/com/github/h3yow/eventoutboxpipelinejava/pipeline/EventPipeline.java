@@ -46,6 +46,17 @@ public class EventPipeline {
                          RetryPolicy retryPolicy,
                          int workerCount,
                          long pollIntervalMillis) {
+        this(broker, state, deadLetters, handler, retryPolicy, workerCount, pollIntervalMillis, 0L);
+    }
+
+    public EventPipeline(InMemoryEventBroker broker,
+                         ConsumerGroupState state,
+                         DeadLetterStore deadLetters,
+                         EventHandler handler,
+                         RetryPolicy retryPolicy,
+                         int workerCount,
+                         long pollIntervalMillis,
+                         long retentionIntervalMillis) {
         if (!(deadLetters instanceof InMemoryDeadLetterStore store)) {
             throw new IllegalArgumentException("deadLetters must be InMemoryDeadLetterStore");
         }
@@ -53,7 +64,7 @@ public class EventPipeline {
         this.state = state;
         this.deadLetters = store;
         this.consumer = new EventConsumer(broker, state, store, handler,
-                retryPolicy, workerCount, pollIntervalMillis);
+                retryPolicy, workerCount, pollIntervalMillis, retentionIntervalMillis);
     }
 
     /**
@@ -139,5 +150,30 @@ public class EventPipeline {
     public InMemoryEventBroker.Location locate(String eventId) {
         return broker.locate(eventId)
                 .orElseThrow(() -> new IllegalArgumentException("unknown eventId: " + eventId));
+    }
+
+    /**
+     * 手动触发一轮安全清理：只回收每个分区“连续终态前缀”中、且未越过最早死信位点
+     * 的已结束事件（成功处理 / 已进死信区之前的连续部分）。清理与消费互斥但不持锁等待业务，
+     * 不阻挡新的入队和消费。
+     *
+     * @return 本轮实际回收的事件总数
+     */
+    public int compactLog() {
+        int removed = consumer.sweepRetention();
+        log.info("decision=COMPACT removedEvents={} basis='manual-sweep'", removed);
+        return removed;
+    }
+
+    public long logStartOffset(String partition) {
+        return broker.logStartOffset(partition);
+    }
+
+    public long logEndOffset(String partition) {
+        return broker.logEndOffset(partition);
+    }
+
+    public int retainedSize(String partition) {
+        return broker.size(partition);
     }
 }

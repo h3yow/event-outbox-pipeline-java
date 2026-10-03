@@ -18,6 +18,12 @@ public final class PipelineFactory {
 
     public static TestHarness newHarness(int partitions, int workers,
                                          int maxAttempts, Duration backoff) {
+        return newHarness(partitions, workers, maxAttempts, backoff, 0L);
+    }
+
+    public static TestHarness newHarness(int partitions, int workers,
+                                         int maxAttempts, Duration backoff,
+                                         long retentionIntervalMillis) {
         InMemoryEventBroker broker = new InMemoryEventBroker(partitions);
         ConsumerGroupState state = new ConsumerGroupState();
         InMemoryDeadLetterStore dlq = new InMemoryDeadLetterStore();
@@ -25,7 +31,7 @@ public final class PipelineFactory {
         RetryPolicy policy = new RetryPolicy(maxAttempts, backoff, backoff.multipliedBy(4));
         // 轮询间隔 2ms，加速测试
         EventPipeline pipeline = new EventPipeline(broker, state, dlq,
-                handler, policy, workers, 2L);
+                handler, policy, workers, 2L, retentionIntervalMillis);
         return new TestHarness(broker, state, dlq, handler, policy, pipeline);
     }
 

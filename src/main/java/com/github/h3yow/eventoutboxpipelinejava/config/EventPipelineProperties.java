@@ -16,6 +16,10 @@ public class EventPipelineProperties {
     private Duration initialBackoff = Duration.ofMillis(50);
     private Duration maxBackoff = Duration.ofSeconds(2);
     private boolean autoStart = false;
+    /**
+     * 后台安全清理的周期；0 或负数表示不启动后台清理（仍可手动 compactLog()）。
+     */
+    private Duration retentionInterval = Duration.ZERO;
 
     public int getPartitionCount() { return partitionCount; }
     public void setPartitionCount(int partitionCount) { this.partitionCount = partitionCount; }
@@ -29,4 +33,6 @@ public class EventPipelineProperties {
     public void setMaxBackoff(Duration maxBackoff) { this.maxBackoff = maxBackoff; }
     public boolean isAutoStart() { return autoStart; }
     public void setAutoStart(boolean autoStart) { this.autoStart = autoStart; }
+    public Duration getRetentionInterval() { return retentionInterval; }
+    public void setRetentionInterval(Duration retentionInterval) { this.retentionInterval = retentionInterval; }
 }
