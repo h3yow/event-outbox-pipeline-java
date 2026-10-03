@@ -1,6 +1,7 @@
 package com.github.h3yow.eventoutboxpipelinejava.pipeline;
 
 import com.github.h3yow.eventoutboxpipelinejava.broker.InMemoryEventBroker;
+import com.github.h3yow.eventoutboxpipelinejava.cleanup.EventLogCleaner;
 import com.github.h3yow.eventoutboxpipelinejava.consumer.ConsumerGroupState;
 import com.github.h3yow.eventoutboxpipelinejava.consumer.EventConsumer;
 import com.github.h3yow.eventoutboxpipelinejava.dlq.DeadLetterRecord;
@@ -10,6 +11,7 @@ import com.github.h3yow.eventoutboxpipelinejava.domain.EventEnvelope;
 import com.github.h3yow.eventoutboxpipelinejava.handler.EventHandler;
 import com.github.h3yow.eventoutboxpipelinejava.offset.OffsetInvalidException;
 import com.github.h3yow.eventoutboxpipelinejava.retry.RetryPolicy;
+import com.github.h3yow.eventoutboxpipelinejava.state.AggregateStateStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,7 +20,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * 管道门面：事件入队、位点回放、死信检索与重放、生命周期管理。
+ * 管道门面：事件入队、位点回放、死信检索与重放、聚合当前状态、日志清理、生命周期管理。
  * 线程安全，所有能力均可在本地运行验证。
  */
 public class EventPipeline {
@@ -28,7 +30,9 @@ public class EventPipeline {
     private final InMemoryEventBroker broker;
     private final ConsumerGroupState state;
     private final InMemoryDeadLetterStore deadLetters;
+    private final AggregateStateStore aggregateState;
     private final EventConsumer consumer;
+    private final EventLogCleaner cleaner;
 
     public EventPipeline(InMemoryEventBroker broker,
                          ConsumerGroupState state,
@@ -46,14 +50,41 @@ public class EventPipeline {
                          RetryPolicy retryPolicy,
                          int workerCount,
                          long pollIntervalMillis) {
+        this(broker, state, deadLetters, new AggregateStateStore(), null, handler,
+                retryPolicy, workerCount, pollIntervalMillis);
+    }
+
+    public EventPipeline(InMemoryEventBroker broker,
+                         ConsumerGroupState state,
+                         DeadLetterStore deadLetters,
+                         EventHandler handler,
+                         RetryPolicy retryPolicy,
+                         int workerCount,
+                         long pollIntervalMillis,
+                         EventLogCleaner cleaner) {
+        this(broker, state, deadLetters, new AggregateStateStore(), cleaner, handler,
+                retryPolicy, workerCount, pollIntervalMillis);
+    }
+
+    public EventPipeline(InMemoryEventBroker broker,
+                         ConsumerGroupState state,
+                         DeadLetterStore deadLetters,
+                         AggregateStateStore aggregateState,
+                         EventLogCleaner cleaner,
+                         EventHandler handler,
+                         RetryPolicy retryPolicy,
+                         int workerCount,
+                         long pollIntervalMillis) {
         if (!(deadLetters instanceof InMemoryDeadLetterStore store)) {
             throw new IllegalArgumentException("deadLetters must be InMemoryDeadLetterStore");
         }
         this.broker = broker;
         this.state = state;
         this.deadLetters = store;
-        this.consumer = new EventConsumer(broker, state, store, handler,
+        this.aggregateState = aggregateState;
+        this.consumer = new EventConsumer(broker, state, store, aggregateState, handler,
                 retryPolicy, workerCount, pollIntervalMillis);
+        this.cleaner = cleaner;
     }
 
     /**
@@ -78,14 +109,28 @@ public class EventPipeline {
 
     public void start() {
         consumer.start();
+        if (cleaner != null) {
+            cleaner.start();
+        }
     }
 
     public void stop() {
+        if (cleaner != null) {
+            cleaner.stop();
+        }
         consumer.stop();
     }
 
     public boolean awaitProcessed(long timeoutMillis) throws InterruptedException {
         return consumer.awaitIdle(timeoutMillis);
+    }
+
+    /**
+     * 手动触发一轮后台清理（无清理器时直接返回 0）。返回本轮删除事件数。
+     * 清理只动已彻底结束的前缀，不阻断入队与消费。
+     */
+    public int cleanupOnce() {
+        return cleaner == null ? 0 : cleaner.cleanupOnce();
     }
 
     /**
@@ -134,6 +179,14 @@ public class EventPipeline {
 
     public boolean isProcessed(String eventId) {
         return state.isProcessed(eventId);
+    }
+
+    /**
+     * 聚合当前状态（最后一个成功处理的事件）。独立于分区日志：
+     * 即使该事件所在日志前缀已被后台清理，这里依旧可读。
+     */
+    public Optional<AggregateStateStore.Snapshot> currentAggregateState(String aggregateKey) {
+        return aggregateState.currentState(aggregateKey);
     }
 
     public InMemoryEventBroker.Location locate(String eventId) {

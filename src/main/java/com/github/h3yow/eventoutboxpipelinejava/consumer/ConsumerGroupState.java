@@ -1,5 +1,6 @@
 package com.github.h3yow.eventoutboxpipelinejava.consumer;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -11,12 +12,21 @@ import java.util.concurrent.atomic.AtomicLong;
  * 已成功处理的事件 ID 集合（幂等依据）。所有方法线程安全。
  *
  * <p>位点语义：committedOffset 表示“下一个待处理位点”。初始为 0。
+ *
+ * <p>同一分区上不同聚合并行推进时，较早位点可能晚于较晚位点结束。
+ * 已彻底结束（成功 / 死信 / 重复跳过）的位点先记入 {@code terminalOffsets}，
+ * 由消费端在分区锁内把连续前缀折叠进 committedOffset，保证位点依旧齐平。
+ *
+ * <p>每次显式回放（seek）会使分区 generation 自增；在途任务以派发时的代际号
+ * 判定自己是否已过期，回放后不允许旧任务再结束位点。
  */
 public class ConsumerGroupState {
 
     private final ConcurrentHashMap<String, AtomicLong> committed = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AtomicInteger> attempts = new ConcurrentHashMap<>();
     private final Set<String> processedEventIds = ConcurrentHashMap.newKeySet();
+    private final ConcurrentHashMap<String, Set<Long>> terminalOffsets = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, AtomicLong> generations = new ConcurrentHashMap<>();
 
     private static String attemptKey(String partition, long offset) {
         return partition + "#" + offset;
@@ -51,6 +61,46 @@ public class ConsumerGroupState {
      */
     public void seek(String partition, long offset) {
         committed.computeIfAbsent(partition, k -> new AtomicLong(0)).set(offset);
+    }
+
+    // ---- 终态位点（并行推进后用于折叠连续前缀） ----
+
+    public void markTerminalOffset(String partition, long offset) {
+        terminalOffsets.computeIfAbsent(partition, k -> ConcurrentHashMap.newKeySet()).add(offset);
+    }
+
+    public boolean isTerminalOffset(String partition, long offset) {
+        Set<Long> offsets = terminalOffsets.get(partition);
+        return offsets != null && offsets.contains(offset);
+    }
+
+    /** 折叠连续前缀时，消费掉单个已终态位点。 */
+    public void removeTerminalOffset(String partition, long offset) {
+        Set<Long> offsets = terminalOffsets.get(partition);
+        if (offsets != null) {
+            offsets.remove(offset);
+        }
+    }
+
+    /**
+     * 回放时丢弃不小于 fromOffset 的全部终态标记（这些位点将被重新投递）。
+     */
+    public void removeTerminalOffsetsFrom(String partition, long fromOffset) {
+        Set<Long> offsets = terminalOffsets.get(partition);
+        if (offsets != null) {
+            offsets.removeIf(o -> o >= fromOffset);
+        }
+    }
+
+    // ---- 分区代际（回放后旧任务失效） ----
+
+    public long generation(String partition) {
+        AtomicLong value = generations.get(partition);
+        return value == null ? 0 : value.get();
+    }
+
+    public long bumpGeneration(String partition) {
+        return generations.computeIfAbsent(partition, k -> new AtomicLong(0)).incrementAndGet();
     }
 
     public int getAttempts(String partition, long offset) {
@@ -100,9 +150,20 @@ public class ConsumerGroupState {
         return Collections.unmodifiableSet(processedEventIds);
     }
 
+    /**
+     * 日志前缀被物理清理后，丢弃对应事件的幂等标记与终态位点。
+     * 仅可用于已彻底结束并被截断的事件；未截断区间的标记必须保留
+     * （重复投递/回放后副作用依旧只能生效一次）。
+     */
+    public void pruneProcessed(Collection<String> eventIds) {
+        processedEventIds.removeAll(eventIds);
+    }
+
     public void clear() {
         committed.clear();
         attempts.clear();
         processedEventIds.clear();
+        terminalOffsets.clear();
+        generations.clear();
     }
 }

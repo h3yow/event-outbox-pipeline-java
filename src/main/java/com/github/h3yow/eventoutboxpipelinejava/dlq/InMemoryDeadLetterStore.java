@@ -47,6 +47,17 @@ public class InMemoryDeadLetterStore implements DeadLetterStore {
         byEventId.clear();
     }
 
+    @Override
+    public Optional<Long> earliestOffset(String partition) {
+        long earliest = Long.MAX_VALUE;
+        for (DeadLetterRecord record : byEventId.values()) {
+            if (record.partition().equals(partition) && record.offset() < earliest) {
+                earliest = record.offset();
+            }
+        }
+        return earliest == Long.MAX_VALUE ? Optional.empty() : Optional.of(earliest);
+    }
+
     public boolean containsLocation(String partition, long offset) {
         for (DeadLetterRecord record : byEventId.values()) {
             if (record.partition().equals(partition) && record.offset() == offset) {

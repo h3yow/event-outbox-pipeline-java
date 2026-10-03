@@ -16,6 +16,9 @@ public class EventPipelineProperties {
     private Duration initialBackoff = Duration.ofMillis(50);
     private Duration maxBackoff = Duration.ofSeconds(2);
     private boolean autoStart = false;
+    private boolean cleanupEnabled = false;
+    private Duration cleanupInterval = Duration.ofSeconds(2);
+    private int cleanupBatchSize = 500;
 
     public int getPartitionCount() { return partitionCount; }
     public void setPartitionCount(int partitionCount) { this.partitionCount = partitionCount; }
@@ -29,4 +32,10 @@ public class EventPipelineProperties {
     public void setMaxBackoff(Duration maxBackoff) { this.maxBackoff = maxBackoff; }
     public boolean isAutoStart() { return autoStart; }
     public void setAutoStart(boolean autoStart) { this.autoStart = autoStart; }
+    public boolean isCleanupEnabled() { return cleanupEnabled; }
+    public void setCleanupEnabled(boolean cleanupEnabled) { this.cleanupEnabled = cleanupEnabled; }
+    public Duration getCleanupInterval() { return cleanupInterval; }
+    public void setCleanupInterval(Duration cleanupInterval) { this.cleanupInterval = cleanupInterval; }
+    public int getCleanupBatchSize() { return cleanupBatchSize; }
+    public void setCleanupBatchSize(int cleanupBatchSize) { this.cleanupBatchSize = cleanupBatchSize; }
 }

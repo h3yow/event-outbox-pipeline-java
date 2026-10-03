@@ -19,4 +19,9 @@ public interface DeadLetterStore {
     int size();
 
     void clear();
+
+    /**
+     * 该分区当前最早的死信位点（清理水位不得越过它）；无死信时为空。
+     */
+    Optional<Long> earliestOffset(String partition);
 }
